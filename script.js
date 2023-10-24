@@ -34,22 +34,23 @@ let config = {
     SIM_RESOLUTION: 128,
     DYE_RESOLUTION: 1024,
     CAPTURE_RESOLUTION: 512,
-    DENSITY_DISSIPATION: 0.2,
-    VELOCITY_DISSIPATION: 1.22,
+    DENSITY_DISSIPATION: 0.7,
+    VELOCITY_DISSIPATION: 2.1,
     PRESSURE: 0.02,
     PRESSURE_ITERATIONS: 20,
-    CURL: 2,
-    SPLAT_RADIUS: 0.34,
-    SPLAT_FORCE: 6000,
-    SPLAT_VELOCITY: false,
+    CURL: 0,
+    SPLAT_RADIUS: 0.46,
+    SPLAT_FORCE: 3000,
+    SPLAT_VELOCITY: true,
     SPLAT_DENSITY: true,
     SHADING: false,
-    COLORFUL: false,
+    COLORFUL: true,
     COLOR_UPDATE_SPEED: 10,
+    DYE_HUE: 0.91,
+    DYE_OPACITY: 0.104,
     PAUSED: false,
-    BACK_COLOR: { r: 0, g: 0, b: 0 },
+    BACK_COLOR: { r: 253, g: 243, b: 227 },
     TRANSPARENT: false,
-
     BLOOM: false,
     BLOOM_ITERATIONS: 8,
     BLOOM_RESOLUTION: 256,
@@ -239,6 +240,9 @@ function startGUI() {
     gui.add(config, 'COLORFUL').name('colorful');
     gui.add(config, 'PAUSED').name('paused').listen();
 
+    gui.add(config, 'DYE_HUE', 0.0, 1.0).name('dye hue');
+    gui.add(config, 'DYE_OPACITY', 0.0, 1.0).name('dye opacity');
+
     gui.add(
         {
             fun: () => {
@@ -247,9 +251,6 @@ function startGUI() {
         },
         'fun'
     ).name('Random splats');
-
-    let colorFolder = gui.addFolder('Color');
-    // colorFolder.add(config, 'SPLAT_RADIUS', 0.0, 1.0).name('splat radius');
 
     let bloomFolder = gui.addFolder('Bloom');
     bloomFolder
@@ -1434,7 +1435,7 @@ function updateKeywords() {
 
 updateKeywords();
 initFramebuffers();
-multipleSplats(parseInt(Math.random() * 20) + 5);
+// multipleSplats(parseInt(Math.random() * 20) + 5);
 
 let lastUpdateTime = Date.now();
 let colorUpdateTimer = 0.0;
@@ -1915,10 +1916,10 @@ function correctDeltaY(delta) {
 }
 
 function generateColor() {
-    let c = HSVtoRGB(Math.random(), 1.0, 1.0);
-    c.r *= 0.15;
-    c.g *= 0.15;
-    c.b *= 0.15;
+    let c = HSVtoRGB(config.DYE_HUE, 1.0, 1.0);
+    c.r *= config.DYE_OPACITY;
+    c.g *= config.DYE_OPACITY;
+    c.b *= config.DYE_OPACITY;
     return c;
 }
 
