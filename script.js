@@ -29,6 +29,8 @@ SOFTWARE.
 const canvas = document.getElementsByTagName('canvas')[0];
 resizeCanvas();
 
+var noise = new Noise(Math.random());
+
 //TODO: SPLAT_DENSITY
 let config = {
     SIM_RESOLUTION: 128,
@@ -1448,9 +1450,13 @@ update();
 function update() {
     const dt = calcDeltaTime();
     if (resizeCanvas()) initFramebuffers();
-    updateColors(dt);
-    applyInputs();
-    if (!config.PAUSED) step(dt);
+    if (!config.PAUSED) {
+        updateColors(dt);
+        // updateAutoPointers(dt);
+        updateAutoPointers(dt);
+        applyInputs();
+        step(dt);
+    }
     render(null);
     requestAnimationFrame(update);
 }
@@ -1905,6 +1911,44 @@ function updatePointerMoveData(pointer, posX, posY) {
 
 function updatePointerUpData(pointer) {
     pointer.down = false;
+}
+
+var noiseLocation = 0;
+var noiseStep = 0.2;
+var noiseScale = 3;
+var noiseSeparation = 100;
+
+function updateAutoPointers(dt) {
+    {
+        let pointer = pointers[densityPointerIdx];
+
+        let noiseX =
+            noise.perlin2(1 * noiseSeparation, noiseLocation) * noiseScale;
+        let noiseY =
+            noise.perlin2(2 * noiseSeparation, noiseLocation) * noiseScale;
+        let posX = Math.min((noiseX / 2 + 0.5) * canvas.width, canvas.width);
+        let posY = Math.min((noiseY / 2 + 0.5) * canvas.height, canvas.height);
+        // console.log({ noiseX, noiseY });
+        let isDown = true;
+
+        pointer.down = isDown;
+        pointer.moved = false;
+        pointer.color = generateColor();
+        pointer.prevTexcoordX = pointer.texcoordX;
+        pointer.prevTexcoordY = pointer.texcoordY;
+        pointer.texcoordX = posX / canvas.width;
+        pointer.texcoordY = 1.0 - posY / canvas.height;
+        pointer.deltaX = correctDeltaX(
+            pointer.texcoordX - pointer.prevTexcoordX
+        );
+        pointer.deltaY = correctDeltaY(
+            pointer.texcoordY - pointer.prevTexcoordY
+        );
+        pointer.moved =
+            Math.abs(pointer.deltaX) > 0 || Math.abs(pointer.deltaY) > 0;
+    }
+
+    noiseLocation += noiseStep * dt;
 }
 
 function correctDeltaX(delta) {
