@@ -29,25 +29,30 @@ SOFTWARE.
 const canvas = document.getElementsByTagName('canvas')[0];
 resizeCanvas();
 
+var noise = new Noise(Math.random());
+
 //TODO: SPLAT_DENSITY
 let config = {
     SIM_RESOLUTION: 128,
     DYE_RESOLUTION: 1024,
     CAPTURE_RESOLUTION: 512,
-    DENSITY_DISSIPATION: 0.7,
-    VELOCITY_DISSIPATION: 2.1,
+    TIME_SCALE: 0.75,
+    DENSITY_DISSIPATION: 0.5,
+    VELOCITY_DISSIPATION: 0.1,
     PRESSURE: 0.02,
     PRESSURE_ITERATIONS: 20,
     CURL: 0,
-    SPLAT_RADIUS: 0.46,
-    SPLAT_FORCE: 1347,
+    SPLAT_FORCE: 611,
+    SPLAT_RADIUS_VELOCITY: 0.8,
+    SPLAT_RADIUS_DENSITY: 0.2,
     SPLAT_VELOCITY: true,
     SPLAT_DENSITY: true,
     SHADING: false,
     COLORFUL: true,
     COLOR_UPDATE_SPEED: 10,
     // DYE_HUE: 0.91,
-    DYE_HUE: 0.48,
+    // DYE_HUE: 0.48,
+    DYE_HUE: 0.52,
     DYE_OPACITY: 0.104,
     PAUSED: false,
     BACK_COLOR: { r: 253, g: 243, b: 227 },
@@ -55,13 +60,15 @@ let config = {
     BLOOM: false,
     BLOOM_ITERATIONS: 8,
     BLOOM_RESOLUTION: 256,
-    BLOOM_INTENSITY: 0.8,
+    BLOOM_INTENSITY: 0.3,
     BLOOM_THRESHOLD: 0.6,
     BLOOM_SOFT_KNEE: 0.7,
     SUNRAYS: false,
     SUNRAYS_RESOLUTION: 196,
     SUNRAYS_WEIGHT: 1.0,
 };
+
+window.config = config;
 
 function pointerPrototype() {
     this.id = -1;
@@ -74,11 +81,24 @@ function pointerPrototype() {
     this.down = false;
     this.moved = false;
     this.color = [30, 0, 300];
+    this.splatDensity = false;
+    this.splatVelocity = true;
+    this.radius = 1;
 }
 
 let pointers = [];
 let splatStack = [];
-pointers.push(new pointerPrototype());
+
+let mousePointerIdx = pointers.push(new pointerPrototype()) - 1;
+let densityPointerIdx = [
+    pointers.push(new pointerPrototype()) - 1,
+    pointers.push(new pointerPrototype()) - 1,
+    // pointers.push(new pointerPrototype()) - 1,
+];
+let velocityPointerIdx = [
+    pointers.push(new pointerPrototype()) - 1,
+    pointers.push(new pointerPrototype()) - 1,
+];
 
 const { gl, ext } = getWebGLContext(canvas);
 
@@ -229,11 +249,13 @@ function startGUI() {
     gui.add(config, 'SIM_RESOLUTION', { 32: 32, 64: 64, 128: 128, 256: 256 })
         .name('sim resolution')
         .onFinishChange(initFramebuffers);
+    gui.add(config, 'TIME_SCALE', 0.001, 10.0).name('time scale');
     gui.add(config, 'DENSITY_DISSIPATION', 0, 4.0).name('density diffusion');
     gui.add(config, 'VELOCITY_DISSIPATION', 0, 4.0).name('velocity diffusion');
     gui.add(config, 'PRESSURE', 0.0, 1.0).name('pressure');
     gui.add(config, 'CURL', 0, 50).name('vorticity').step(1);
-    gui.add(config, 'SPLAT_RADIUS', 0.0, 1.0).name('splat radius');
+    gui.add(config, 'SPLAT_RADIUS_VELOCITY', 0.0, 1.0).name('velocity radius');
+    gui.add(config, 'SPLAT_RADIUS_DENSITY', 0.0, 1.0).name('density radius');
     gui.add(config, 'SPLAT_FORCE', 0.0, 12000).name('splat force');
     gui.add(config, 'SPLAT_VELOCITY').name('splat velocity');
     gui.add(config, 'SPLAT_DENSITY').name('splat density');
@@ -345,7 +367,7 @@ function startGUI() {
     app.domElement.parentElement.appendChild(appIcon);
     appIcon.className = 'icon app';
 
-    if (isMobile()) gui.close();
+    if (true) gui.close();
 }
 
 function isMobile() {
@@ -1443,11 +1465,15 @@ let colorUpdateTimer = 0.0;
 update();
 
 function update() {
-    const dt = calcDeltaTime();
+    const dt = calcDeltaTime() * config.TIME_SCALE;
     if (resizeCanvas()) initFramebuffers();
-    updateColors(dt);
-    applyInputs();
-    if (!config.PAUSED) step(dt);
+    if (!config.PAUSED) {
+        updateColors(dt);
+        // updateAutoPointers(dt);
+        updateAutoPointers(dt);
+        applyInputs();
+        step(dt);
+    }
     render(null);
     requestAnimationFrame(update);
 }
@@ -1585,7 +1611,7 @@ function step(dt) {
     gl.uniform1f(advectionProgram.uniforms.dt, dt);
     gl.uniform1f(
         advectionProgram.uniforms.dissipation,
-        config.VELOCITY_DISSIPATION
+        config.VELOCITY_DISSIPATION / config.TIME_SCALE
     );
     blit(velocity.write);
     velocity.swap();
@@ -1600,7 +1626,7 @@ function step(dt) {
     gl.uniform1i(advectionProgram.uniforms.uSource, dye.read.attach(1));
     gl.uniform1f(
         advectionProgram.uniforms.dissipation,
-        config.DENSITY_DISSIPATION
+        config.DENSITY_DISSIPATION / config.TIME_SCALE
     );
     blit(dye.write);
     dye.swap();
@@ -1755,7 +1781,16 @@ function blur(target, temp, iterations) {
 function splatPointer(pointer) {
     let dx = pointer.deltaX * config.SPLAT_FORCE;
     let dy = pointer.deltaY * config.SPLAT_FORCE;
-    splat(pointer.texcoordX, pointer.texcoordY, dx, dy, pointer.color);
+    splat(
+        pointer.texcoordX,
+        pointer.texcoordY,
+        dx,
+        dy,
+        pointer.color,
+        pointer.splatDensity,
+        pointer.splatVelocity,
+        pointer.radius
+    );
 }
 
 function multipleSplats(amount) {
@@ -1772,10 +1807,19 @@ function multipleSplats(amount) {
     }
 }
 
-function splat(x, y, dx, dy, color) {
+function splat(
+    x,
+    y,
+    dx,
+    dy,
+    color,
+    doDensity = true,
+    doVelocity = true,
+    radius = 1
+) {
     splatProgram.bind();
 
-    if (config.SPLAT_VELOCITY) {
+    if (doVelocity) {
         gl.uniform1i(splatProgram.uniforms.uTarget, velocity.read.attach(0));
     }
 
@@ -1787,15 +1831,21 @@ function splat(x, y, dx, dy, color) {
     gl.uniform3f(splatProgram.uniforms.color, dx, dy, 0.0);
     gl.uniform1f(
         splatProgram.uniforms.radius,
-        correctRadius(config.SPLAT_RADIUS / 100.0)
+        correctRadius(
+            (radius *
+                (doDensity
+                    ? config.SPLAT_RADIUS_DENSITY
+                    : config.SPLAT_VELOCITY)) /
+                100.0
+        )
     );
 
-    if (config.SPLAT_VELOCITY) {
+    if (doVelocity) {
         blit(velocity.write);
         velocity.swap();
     }
 
-    if (config.SPLAT_DENSITY) {
+    if (doDensity) {
         gl.uniform1i(splatProgram.uniforms.uTarget, dye.read.attach(0));
         gl.uniform3f(splatProgram.uniforms.color, color.r, color.g, color.b);
         blit(dye.write);
@@ -1812,13 +1862,13 @@ function correctRadius(radius) {
 canvas.addEventListener('mousedown', e => {
     let posX = scaleByPixelRatio(e.offsetX);
     let posY = scaleByPixelRatio(e.offsetY);
-    let pointer = pointers.find(p => p.id == -1);
-    if (pointer == null) pointer = new pointerPrototype();
+    let pointer = pointers[mousePointerIdx];
+    // if (pointer == null) pointer = new pointerPrototype();
     updatePointerDownData(pointer, -1, posX, posY);
 });
 
 canvas.addEventListener('mousemove', e => {
-    let pointer = pointers[0];
+    let pointer = pointers[mousePointerIdx];
     if (!pointer.down) return;
     let posX = scaleByPixelRatio(e.offsetX);
     let posY = scaleByPixelRatio(e.offsetY);
@@ -1826,50 +1876,50 @@ canvas.addEventListener('mousemove', e => {
 });
 
 window.addEventListener('mouseup', () => {
-    updatePointerUpData(pointers[0]);
+    updatePointerUpData(pointers[mousePointerIdx]);
 });
 
-canvas.addEventListener('touchstart', e => {
-    e.preventDefault();
-    const touches = e.targetTouches;
-    while (touches.length >= pointers.length)
-        pointers.push(new pointerPrototype());
-    for (let i = 0; i < touches.length; i++) {
-        let posX = scaleByPixelRatio(touches[i].pageX);
-        let posY = scaleByPixelRatio(touches[i].pageY);
-        updatePointerDownData(
-            pointers[i + 1],
-            touches[i].identifier,
-            posX,
-            posY
-        );
-    }
-});
+// canvas.addEventListener('touchstart', e => {
+//     e.preventDefault();
+//     const touches = e.targetTouches;
+//     while (touches.length >= pointers.length)
+//         pointers.push(new pointerPrototype());
+//     for (let i = 0; i < touches.length; i++) {
+//         let posX = scaleByPixelRatio(touches[i].pageX);
+//         let posY = scaleByPixelRatio(touches[i].pageY);
+//         updatePointerDownData(
+//             pointers[i + 1],
+//             touches[i].identifier,
+//             posX,
+//             posY
+//         );
+//     }
+// });
 
-canvas.addEventListener(
-    'touchmove',
-    e => {
-        e.preventDefault();
-        const touches = e.targetTouches;
-        for (let i = 0; i < touches.length; i++) {
-            let pointer = pointers[i + 1];
-            if (!pointer.down) continue;
-            let posX = scaleByPixelRatio(touches[i].pageX);
-            let posY = scaleByPixelRatio(touches[i].pageY);
-            updatePointerMoveData(pointer, posX, posY);
-        }
-    },
-    false
-);
+// canvas.addEventListener(
+//     'touchmove',
+//     e => {
+//         e.preventDefault();
+//         const touches = e.targetTouches;
+//         for (let i = 0; i < touches.length; i++) {
+//             let pointer = pointers[i + 1];
+//             if (!pointer.down) continue;
+//             let posX = scaleByPixelRatio(touches[i].pageX);
+//             let posY = scaleByPixelRatio(touches[i].pageY);
+//             updatePointerMoveData(pointer, posX, posY);
+//         }
+//     },
+//     false
+// );
 
-window.addEventListener('touchend', e => {
-    const touches = e.changedTouches;
-    for (let i = 0; i < touches.length; i++) {
-        let pointer = pointers.find(p => p.id == touches[i].identifier);
-        if (pointer == null) continue;
-        updatePointerUpData(pointer);
-    }
-});
+// window.addEventListener('touchend', e => {
+//     const touches = e.changedTouches;
+//     for (let i = 0; i < touches.length; i++) {
+//         let pointer = pointers.find(p => p.id == touches[i].identifier);
+//         if (pointer == null) continue;
+//         updatePointerUpData(pointer);
+//     }
+// });
 
 window.addEventListener('keydown', e => {
     if (e.code === 'KeyP') config.PAUSED = !config.PAUSED;
@@ -1902,6 +1952,88 @@ function updatePointerMoveData(pointer, posX, posY) {
 
 function updatePointerUpData(pointer) {
     pointer.down = false;
+}
+
+var noiseLocation = 0;
+var noiseStep = 0.1;
+var noiseScale = 1.5;
+var noiseSeparation = 1000;
+
+function updateAutoPointers(dt) {
+    let i = 1;
+    for (const idx of densityPointerIdx) {
+        let pointer = pointers[idx];
+
+        let noiseX =
+            noise.simplex2(i * noiseSeparation, noiseLocation) * noiseScale;
+        i++;
+        let noiseY =
+            noise.simplex2(i * noiseSeparation, noiseLocation) * noiseScale;
+        i++;
+        let posX = Math.min((noiseX / 2 + 0.5) * canvas.width, canvas.width);
+        let posY = Math.min((noiseY / 2 + 0.5) * canvas.height, canvas.height);
+        // console.log({ noiseX, noiseY });
+        let radius = noise.simplex2(i * noiseSeparation, noiseLocation) + 1;
+        i++;
+        const isDown = radius > 0.2;
+
+        pointer.down = isDown;
+        pointer.moved = false;
+        pointer.color = generateColor();
+        pointer.prevTexcoordX = pointer.texcoordX;
+        pointer.prevTexcoordY = pointer.texcoordY;
+        pointer.texcoordX = posX / canvas.width;
+        pointer.texcoordY = 1.0 - posY / canvas.height;
+        pointer.deltaX = correctDeltaX(
+            pointer.texcoordX - pointer.prevTexcoordX
+        );
+        pointer.deltaY = correctDeltaY(
+            pointer.texcoordY - pointer.prevTexcoordY
+        );
+        pointer.moved = isDown
+            ? Math.abs(pointer.deltaX) > 0 || Math.abs(pointer.deltaY) > 0
+            : false;
+        pointer.splatDensity = true;
+        pointer.splatVelocity = false;
+        pointer.radius = radius;
+    }
+    for (const idx of velocityPointerIdx) {
+        let pointer = pointers[idx];
+
+        let noiseX =
+            noise.simplex2(i * noiseSeparation, noiseLocation * 1.5) *
+            noiseScale;
+        i++;
+        let noiseY =
+            noise.simplex2(i * noiseSeparation, noiseLocation * 1.5) *
+            noiseScale;
+        i++;
+        let posX = Math.min((noiseX / 2 + 0.5) * canvas.width, canvas.width);
+        let posY = Math.min((noiseY / 2 + 0.5) * canvas.height, canvas.height);
+        // console.log({ noiseX, noiseY });
+        let isDown = true;
+
+        pointer.down = isDown;
+        pointer.moved = false;
+        pointer.color = generateColor();
+        pointer.prevTexcoordX = pointer.texcoordX;
+        pointer.prevTexcoordY = pointer.texcoordY;
+        pointer.texcoordX = posX / canvas.width;
+        pointer.texcoordY = 1.0 - posY / canvas.height;
+        pointer.deltaX = correctDeltaX(
+            pointer.texcoordX - pointer.prevTexcoordX
+        );
+        pointer.deltaY = correctDeltaY(
+            pointer.texcoordY - pointer.prevTexcoordY
+        );
+        pointer.moved = isDown
+            ? Math.abs(pointer.deltaX) > 0 || Math.abs(pointer.deltaY) > 0
+            : false;
+        pointer.splatDensity = false;
+        pointer.splatVelocity = true;
+    }
+
+    noiseLocation += noiseStep * dt;
 }
 
 function correctDeltaX(delta) {
@@ -2008,4 +2140,3 @@ function hashCode(s) {
     }
     return hash;
 }
-
